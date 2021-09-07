@@ -7,30 +7,152 @@ import android.view.LayoutInflater
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.InputMethodManager
+import androidx.compose.foundation.Image
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material.MaterialTheme
+import androidx.compose.material.Surface
+import androidx.compose.material.Text
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.remember
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.fragment.app.Fragment
-import androidx.recyclerview.widget.LinearLayoutManager
-import com.bumptech.glide.Glide
+import androidx.fragment.app.viewModels
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
+import coil.annotation.ExperimentalCoilApi
+import coil.compose.rememberImagePainter
 import com.google.android.gms.tasks.Task
+import com.google.android.material.composethemeadapter.MdcTheme
 import com.google.android.material.snackbar.Snackbar
-import com.google.firebase.example.fireeats.R
 import com.google.firebase.example.fireeats.databinding.FragmentRestaurantDetailBinding
-import com.google.firebase.example.fireeats.kotlin.adapter.RatingAdapter
 import com.google.firebase.example.fireeats.kotlin.model.Rating
+import com.google.firebase.example.fireeats.kotlin.model.Response
 import com.google.firebase.example.fireeats.kotlin.model.Restaurant
-import com.google.firebase.example.fireeats.kotlin.util.RestaurantUtil
+import com.google.firebase.example.fireeats.kotlin.util.RatingUtil.toSimpleString
+import com.google.firebase.example.fireeats.kotlin.viewmodel.RestaurantViewModel
 import com.google.firebase.firestore.DocumentReference
-import com.google.firebase.firestore.DocumentSnapshot
-import com.google.firebase.firestore.EventListener
 import com.google.firebase.firestore.FirebaseFirestore
-import com.google.firebase.firestore.FirebaseFirestoreException
-import com.google.firebase.firestore.ListenerRegistration
-import com.google.firebase.firestore.Query
 import com.google.firebase.firestore.ktx.firestore
 import com.google.firebase.firestore.ktx.toObject
 import com.google.firebase.ktx.Firebase
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
+import me.zhanghai.android.materialratingbar.MaterialRatingBar
+
+@Composable
+fun Ratings(ratingsFlow: StateFlow<Response<List<Rating>>>) {
+    val ratings by ratingsFlow.collectAsState()
+    when (val _ratings = ratings) {
+        is Response.Success -> RatingList(_ratings.data)
+        is Response.Failed -> Text(text = "Failed: ${_ratings.message}")
+        is Response.Loading -> Text(text = "Loading...")
+    }
+}
+
+@Composable
+fun RatingList(ratings: List<Rating>) {
+    LazyColumn(modifier = Modifier.padding(16.dp)) {
+        items(items = ratings) { rating ->
+            Column(modifier = Modifier.padding(vertical = 8.dp)) {
+                Row() {
+                    Text(text = rating.userName ?: "Unknown User",
+                            style = MaterialTheme.typography.overline
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    rating.timestamp?.let {
+                        Text(text = it.toSimpleString(),
+                                style = MaterialTheme.typography.overline
+                        )
+                    }
+                    Stars(rating.rating.toFloat(), modifier = Modifier.height(10.dp))
+                }
+                Row() {
+                    Text(text = rating.text ?: "No text",
+                            style = MaterialTheme.typography.body2)
+                }
+
+            }
+        }
+    }
+}
+
+@Composable
+fun RestaurantScreen(viewModel: RestaurantViewModel) {
+    Column() {
+        RestaurantHeader(restaurantFlow = viewModel.restaurant, modifier = Modifier.height(200.dp))
+        Ratings(ratingsFlow = viewModel.ratings)
+    }
+}
+
+@Composable
+fun RestaurantHeader(restaurantFlow: StateFlow<Response<Restaurant>>, modifier: Modifier) {
+    val restaurant by restaurantFlow.collectAsState()
+    Surface(color = MaterialTheme.colors.secondary, modifier = modifier) {
+        when(val _restaurant = restaurant) {
+            is Response.Failed -> Text(text = "Failed")
+            is Response.Loading -> Text(text = "Loading")
+            is Response.Success -> RestaurantDetails(_restaurant.data)
+        }
+    }
+}
+
+@ExperimentalCoilApi
+@Composable
+fun RestaurantDetails(restaurant: Restaurant) {
+    Box(modifier = Modifier.height(200.dp)) {
+        Image(
+                painter = rememberImagePainter(restaurant.photo),
+                contentDescription = "Restaurant Image",
+                modifier = Modifier.fillMaxSize()
+        )
+        Column {
+            restaurant.name?.let {
+                Row() {
+                    Text(text = it, style = MaterialTheme.typography.h5.copy(color = Color.White), modifier = Modifier.padding(4.dp))
+                    Text(text = "$".repeat(restaurant.price),
+                            style = MaterialTheme.typography.h6.copy(color = Color.White), modifier = Modifier.padding(4.dp))
+                }
+            }
+            Row() {
+                Stars(restaurant.avgRating.toFloat(), modifier = Modifier.height(20.dp))
+                Text(text = "(${restaurant.numRatings})",
+                        style = MaterialTheme.typography.subtitle1.copy(color = Color.White))
+            }
+            Row() {
+                restaurant.category?.let {
+                    Text(text = it, style = MaterialTheme.typography.subtitle1.copy(color = Color.White))
+                }
+                Spacer(modifier = Modifier.padding(4.dp))
+                restaurant.city?.let {
+                    Text(text = it, style = MaterialTheme.typography.subtitle1.copy(color = Color.White))
+                }
+            }
+        }
+
+    }
+}
+
+@Composable
+fun Stars(rating: Float, modifier: Modifier = Modifier) {
+    AndroidView(modifier = modifier,
+            factory = { context ->
+                MaterialRatingBar(context).apply { } },
+            update = { view ->
+                view.rating = rating
+            })
+
+}
 
 class RestaurantDetailFragment : Fragment(),
-    EventListener<DocumentSnapshot>,
         RatingDialogFragment.RatingListener {
 
     private var ratingDialog: RatingDialogFragment? = null
@@ -38,9 +160,6 @@ class RestaurantDetailFragment : Fragment(),
     private lateinit var binding: FragmentRestaurantDetailBinding
     private lateinit var firestore: FirebaseFirestore
     private lateinit var restaurantRef: DocumentReference
-    private lateinit var ratingAdapter: RatingAdapter
-
-    private var restaurantRegistration: ListenerRegistration? = null
 
     override fun onCreateView(inflater: LayoutInflater, container: ViewGroup?, savedInstanceState: Bundle?): View? {
         binding = FragmentRestaurantDetailBinding.inflate(inflater, container, false)
@@ -49,88 +168,21 @@ class RestaurantDetailFragment : Fragment(),
 
     override fun onViewCreated(view: View, savedInstanceState: Bundle?) {
         super.onViewCreated(view, savedInstanceState)
-
         // Get restaurant ID from extras
         val restaurantId = RestaurantDetailFragmentArgs.fromBundle(requireArguments()).keyRestaurantId
+        val viewModel by viewModels<RestaurantViewModel>()
+        viewModel.getRestaurant(restaurantId)
 
-        // Initialize Firestore
-        firestore = Firebase.firestore
+        val composeReviewsView = binding.ratings
+        composeReviewsView.setContent {
+            MdcTheme {
+                RestaurantScreen(viewModel)
+            }
+        }
 
         // Get reference to the restaurant
-        restaurantRef = firestore.collection("restaurants").document(restaurantId)
-
-        // Get ratings
-        val ratingsQuery = restaurantRef
-                .collection("ratings")
-                .orderBy("timestamp", Query.Direction.DESCENDING)
-                .limit(50)
-
-        // RecyclerView
-        ratingAdapter = object : RatingAdapter(ratingsQuery) {
-            override fun onDataChanged() {
-                if (itemCount == 0) {
-                    binding.recyclerRatings.visibility = View.GONE
-                    binding.viewEmptyRatings.visibility = View.VISIBLE
-                } else {
-                    binding.recyclerRatings.visibility = View.VISIBLE
-                    binding.viewEmptyRatings.visibility = View.GONE
-                }
-            }
-        }
-        binding.recyclerRatings.layoutManager = LinearLayoutManager(context)
-        binding.recyclerRatings.adapter = ratingAdapter
-
         ratingDialog = RatingDialogFragment()
 
-        binding.restaurantButtonBack.setOnClickListener { onBackArrowClicked() }
-        binding.fabShowRatingDialog.setOnClickListener { onAddRatingClicked() }
-    }
-
-    public override fun onStart() {
-        super.onStart()
-
-        ratingAdapter.startListening()
-        restaurantRegistration = restaurantRef.addSnapshotListener(this)
-    }
-
-    public override fun onStop() {
-        super.onStop()
-
-        ratingAdapter.stopListening()
-
-        restaurantRegistration?.remove()
-        restaurantRegistration = null
-    }
-
-    /**
-     * Listener for the Restaurant document ([.restaurantRef]).
-     */
-    override fun onEvent(snapshot: DocumentSnapshot?, e: FirebaseFirestoreException?) {
-        if (e != null) {
-            Log.w(TAG, "restaurant:onEvent", e)
-            return
-        }
-
-        snapshot?.let {
-            val restaurant = snapshot.toObject<Restaurant>()
-            if (restaurant != null) {
-                onRestaurantLoaded(restaurant)
-            }
-        }
-    }
-
-    private fun onRestaurantLoaded(restaurant: Restaurant) {
-        binding.restaurantName.text = restaurant.name
-        binding.restaurantRating.rating = restaurant.avgRating.toFloat()
-        binding.restaurantNumRatings.text = getString(R.string.fmt_num_ratings, restaurant.numRatings)
-        binding.restaurantCity.text = restaurant.city
-        binding.restaurantCategory.text = restaurant.category
-        binding.restaurantPrice.text = RestaurantUtil.getPriceString(restaurant)
-
-        // Background image
-        Glide.with(binding.restaurantImage.context)
-                .load(restaurant.photo)
-                .into(binding.restaurantImage)
     }
 
     private fun onBackArrowClicked() {
@@ -149,7 +201,7 @@ class RestaurantDetailFragment : Fragment(),
 
                     // Hide keyboard and scroll to top
                     hideKeyboard()
-                    binding.recyclerRatings.smoothScrollToPosition(0)
+//                    binding.recyclerRatings.smoothScrollToPosition(0)
                 }
                 .addOnFailureListener(requireActivity()) { e ->
                     Log.w(TAG, "Add rating failed", e)

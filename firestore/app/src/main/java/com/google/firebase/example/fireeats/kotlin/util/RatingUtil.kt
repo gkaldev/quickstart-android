@@ -1,9 +1,11 @@
 package com.google.firebase.example.fireeats.kotlin.util
 
 import com.google.firebase.example.fireeats.kotlin.model.Rating
+import java.text.SimpleDateFormat
 import java.util.ArrayList
 import java.util.Random
 import java.util.UUID
+import java.util.Date
 
 /**
  * Utilities for Ratings.
@@ -70,5 +72,11 @@ object RatingUtil {
         }
 
         return sum / ratings.size
+    }
+
+
+    fun Date.toSimpleString() : String {
+        val format = SimpleDateFormat("MM/dd/yyy")
+        return format.format(this)
     }
 }
